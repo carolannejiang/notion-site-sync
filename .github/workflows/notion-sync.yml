@@ -1,0 +1,60 @@
+name: Sync writings from Notion
+
+on:
+  # Poll Notion every hour. Cron is in UTC.
+  schedule:
+    - cron: "0 * * * *"
+  # Also lets you run it on demand from the Actions tab ("Run workflow").
+  workflow_dispatch:
+
+# Needed so the job can commit the generated HTML back to the repo.
+permissions:
+  contents: write
+
+# Don't let two runs push at the same time.
+concurrency:
+  group: notion-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the site
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: scripts/notion-sync
+        # npm ci installs exactly what package-lock.json pins, so an hourly run
+        # can never pick up a new (or compromised) dependency release on its own.
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate HTML from Notion
+        working-directory: scripts/notion-sync
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          # The parent "Writing" page ID. Falls back to the old secret name so
+          # you can just change the value of the existing secret if you prefer.
+          NOTION_PARENT_PAGE_ID: ${{ secrets.NOTION_PARENT_PAGE_ID }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: node sync.mjs
+
+      - name: Commit and push any changes
+        run: |
+          git config user.name "notion-sync[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Stage only what the sync actually produces (essay pages at the repo
+          # root, the writing index, localized images, and the slug state file)
+          # so a stray file created during the run can never be committed.
+          git add -A -- '*.html' images/notion scripts/notion-sync/.generated.json
+          if git diff --cached --quiet; then
+            echo "No changes to publish."
+          else
+            git commit -m "Sync writings from Notion"
+            git push
+          fi
