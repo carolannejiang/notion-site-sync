@@ -20,21 +20,42 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      # Until the Notion secrets are configured (e.g. right after creating a
+      # repo from this template), skip the sync with a notice instead of
+      # failing, so the hourly schedule doesn't send failure emails.
+      - name: Check that the Notion secrets are configured
+        id: secrets
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_PARENT_PAGE_ID: ${{ secrets.NOTION_PARENT_PAGE_ID }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: |
+          if [ -n "$NOTION_TOKEN" ] && { [ -n "$NOTION_PARENT_PAGE_ID" ] || [ -n "$NOTION_DATABASE_ID" ]; }; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Notion secrets not set yet, so there is nothing to sync. Add NOTION_TOKEN plus NOTION_PARENT_PAGE_ID (or NOTION_DATABASE_ID) under Settings → Secrets and variables → Actions to activate the sync."
+          fi
+
       - name: Check out the site
+        if: steps.secrets.outputs.configured == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Node
+        if: steps.secrets.outputs.configured == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Install dependencies
+        if: steps.secrets.outputs.configured == 'true'
         working-directory: scripts/notion-sync
         # npm ci installs exactly what package-lock.json pins, so an hourly run
         # can never pick up a new (or compromised) dependency release on its own.
         run: npm ci --no-audit --no-fund
 
       - name: Generate HTML from Notion
+        if: steps.secrets.outputs.configured == 'true'
         working-directory: scripts/notion-sync
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
@@ -45,6 +66,7 @@ jobs:
         run: node sync.mjs
 
       - name: Commit and push any changes
+        if: steps.secrets.outputs.configured == 'true'
         run: |
           git config user.name "notion-sync[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
